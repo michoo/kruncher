@@ -1,0 +1,92 @@
+version: '3'
+services:
+  redis:
+    container_name: redis_container
+    hostname: redis
+    image: redis:7-alpine
+    command: [ "redis-server", "--appendonly", "yes" ]
+    volumes:
+      - ./infra/data/redis:/data
+    ports:
+      - 6379:6379
+    restart: unless-stopped
+  redis-commander:
+    container_name: redis_commander_container
+    hostname: redis_commander
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+  prometheus:
+    container_name: prometheus_container
+    hostname: prometheus
+    image: prom/prometheus
+    user: root
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infra/data/prometheus:/prometheus
+    ports:
+      - 9090:9090
+    restart: unless-stopped
+  grafana:
+    container_name: grafana_container
+    hostname: grafana
+    image: grafana/grafana
+    user: '0'
+    volumes:
+      - ./infra/data/grafana:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    ports:
+      - 3000:3000
+    restart: unless-stopped
+  postgres:
+    container_name: postgres_container
+    hostname: postgres
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      PGDATA: /data/postgres
+    volumes:
+      - ./infra/data/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+  worker:
+    build: ./
+    entrypoint: celery
+    command: -A tasks worker -l info -E
+    user: nobody
+    working_dir: /app
+    volumes:
+      - ./src:/app
+    environment:
+      CELERY_BROKER_URL: redis://redis
+      CELERY_RESULT_BACKEND: redis://redis
+      PYTHONPATH: /app
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - postgres
+  flower:
+    build: ./
+    command: celery -A tasks flower
+    working_dir: /app
+    volumes:
+      - ./src:/app
+    ports:
+      - 5555:5555
+    environment:
+      CELERY_BROKER_URL: redis://redis
+      CELERY_RESULT_BACKEND: redis://redis
+      FLOWER_UNAUTHENTICATED_API: True
+    restart: unless-stopped
+    depends_on:
+      - worker

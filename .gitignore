@@ -1,0 +1,4 @@
+.venv
+.env
+infra/data
+.idea
